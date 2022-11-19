@@ -1,0 +1,161 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "DHTesp.h"
+
+const int DHT_PIN = 15;
+#define DHTTYPE DHT22
+#define LED 5
+DHTesp dhtSensor;
+
+int buzzerPin = 2;               
+int inputPin = 4;              
+int pirState = LOW;             
+int val = 0; 
+
+void callback(char* topic, byte* payload, unsigned int payloadLength);
+
+#define ORG "995kq7"
+#define DEVICE_TYPE "Test_Device_Type"
+#define DEVICE_ID "26635"
+#define TOKEN "o3d471A?EzrQoOU3Y_"
+String data3;
+float h,t;
+
+char server[] = ORG ".messaging.internetofthings.ibmcloud.com";
+char publishTopic[] = "iot-2/evt/Data/fmt/json";
+char topic[] = "iot-2/cmd/home/fmt/String";  // cmd  REPRESENT command type AND COMMAND IS TEST OF FORMAT STRING
+char authMethod[] = "use-token-auth";
+char token[] = TOKEN;
+char clientId[] = "d:" ORG ":" DEVICE_TYPE ":" DEVICE_ID;
+
+WiFiClient WiFiClient;
+PubSubClient client(server, 1883, callback, WiFiClient);
+
+void setup(){
+  Serial.begin(115200);
+  dhtSensor.setup(DHT_PIN, DHTesp::DHT22);
+  pinMode(LED, OUTPUT);
+  delay(10);
+  Serial.println();
+  pinMode(buzzerPin, OUTPUT);    
+  pinMode(inputPin, INPUT);    
+  WiFiConnect();
+  mqttConnect();
+
+}
+
+void loop() {
+  TempAndHumidity  data = dhtSensor.getTempAndHumidity();
+  t= data.temperature;
+  h= data.humidity;
+  Serial.print("temperature:");
+  Serial.println(t);
+  Serial.print("Humdidty:");
+  Serial.println(h);
+
+  val = digitalRead(inputPin);  // read input value
+  if (val == HIGH) {            // check if the input is HIGH
+    digitalWrite(buzzerPin, HIGH);  // turn LED ON
+    if (pirState == LOW) {
+      // we have just turned on
+      Serial.println("Motion detected!");
+      // We only want to print on the output change, not state
+      pirState = HIGH;
+    }
+  } else {
+    digitalWrite(buzzerPin, LOW); // turn LED OFF
+    if (pirState == HIGH) {
+      // we have just turned of
+      Serial.println("Motion ended!");
+      // We only want to print on the output change, not state
+      pirState = LOW;
+    }
+  }
+
+  publishData(t,h);
+  delay(3000);
+  if (!client.loop()) {
+    mqttConnect();
+  }
+}
+
+
+void publishData(float temp, float humid) {
+  mqttConnect();
+
+  
+  String payload = "{\"temperature\":";
+  payload += temp;
+  payload += "," "\"humidity\":";
+  payload += humid;
+  payload += "}";
+
+  Serial.print("Sending payload: ");
+  Serial.println(payload);
+
+  
+  if (client.publish(publishTopic, (char*) payload.c_str())) {
+    Serial.println("Publish OK");
+  } else {
+    Serial.println("Publish FAILED");
+  }
+  
+}
+void mqttConnect() {
+  if (!client.connected()) {
+    Serial.print("Reconnecting MQTT client to ");
+    Serial.println(server);
+    while (!client.connect(clientId, authMethod, token)) {
+      Serial.print(".");
+      delay(500);
+    }
+    initManagedDevice();
+    Serial.println();
+  }
+}
+void WiFiConnect()
+{
+  Serial.begin(9600);
+  Serial.print("Connecting to WiFi");
+  WiFi.begin("Wokwi-GUEST", "", 6);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(100);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected: ");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void initManagedDevice() {
+  if (client.subscribe(topic)) {
+    // Serial.println(client.subscribe(topic));
+    Serial.println("subscribe to cmd OK");
+  } else {
+    Serial.println("subscribe to cmd FAILED");
+  }
+}
+
+void callback(char* topic, byte* payload, unsigned int payloadLength)
+{
+
+  Serial.print("callback invoked for topic: ");
+  Serial.println(topic);
+
+  for (int i = 0; i < payloadLength; i++) {
+    //Serial.print((char)payload[i]);
+    data3 += (char)payload[i];
+  }
+
+  Serial.println("Data: " + data3 );
+  if (data3 == "motoron") {
+    Serial.println("motor is on");
+    digitalWrite(LED,HIGH);
+  }
+  else if (data3 == "motoroff") {
+    Serial.println(data3);
+    digitalWrite(LED,LOW);
+  }
+  data3 = "";
+} 
